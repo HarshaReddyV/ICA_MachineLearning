@@ -3,6 +3,13 @@ import plotly.graph_objs as go
 from plotly.offline import plot
 from plotly.offline import plot
 import plotly.graph_objs as go
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
+from keras import Input
+from datetime import datetime, timedelta
 
 
 def Convert_Volume(val):
@@ -89,8 +96,104 @@ def VisualiseData():
  
     fig = go.Figure(data=[volume_bar, price_line], layout=layout)
     plot(fig, filename="price_volume_chart.html")
-    
+
+
+def Build_Model():
+    # Load and preprocess data
+    df = pd.read_csv("FTSE100_DataProcessed.csv")
+    df['Price'] = df['Price'].str.replace(',', '').astype(float)
+    df = df.sort_values('Date')  # Oldest to newest
+
+    # Scale prices
+    scaler = MinMaxScaler()
+    scaled_prices = scaler.fit_transform(df[['Price']])
+
+    # Create sequences
+    def create_sequences(data, window_size=60):
+        X, y = [], []
+        for i in range(len(data) - window_size):
+            X.append(data[i:i+window_size])
+            y.append(data[i+window_size])
+        return np.array(X), np.array(y)
+
+    window_size = 60
+    X, y = create_sequences(scaled_prices, window_size)
+
+    # Build LSTM model with Input() layer
+    model = Sequential()
+    model.add(Input(shape=(X.shape[1], 1)))
+    model.add(LSTM(50, return_sequences=True))
+    model.add(LSTM(50))
+    model.add(Dense(1))
+
+    model.compile(optimizer='adam', loss='mean_squared_error')
+    model.fit(X, y, epochs=20, batch_size=16, verbose=0)
+
+    # Predict next 7 days
+    last_sequence = scaled_prices[-window_size:]
+    predicted = []
+    input_seq = last_sequence.reshape(1, window_size, 1)
+
+    for _ in range(7):
+        next_price = model.predict(input_seq, verbose=0)
+        predicted.append(next_price[0, 0])
+        input_seq = np.append(input_seq[:, 1:, :], [[[next_price[0, 0]]]], axis=1)
+
+    # Inverse transform to get actual price
+    predicted_prices = scaler.inverse_transform(np.array(predicted).reshape(-1, 1))
+
+    # Convert dates
+    df['Date'] = pd.to_datetime(df['Date'])
+    historical_dates = df['Date'].values
+    original_prices = scaler.inverse_transform(scaled_prices)
+
+    # Create future dates (as pandas datetime for plotting)
+    last_date = df['Date'].iloc[-1]
+    future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=7, freq='D')
+
+    # Print predicted results with dates
+    print("\nPredicted Prices:")
+    for i, price in enumerate(predicted_prices, 1):
+        print(f"{future_dates[i-1].date()}: {price[0]:.2f}")
+
+    # Plot interactive chart
+    fig = go.Figure()
+
+    # Historical data
+    fig.add_trace(go.Scatter(
+        x=historical_dates,
+        y=original_prices.flatten(),
+        mode='lines',
+        name='Historical Prices',
+        line=dict(color='gray')
+    ))
+
+    # Predicted data
+    fig.add_trace(go.Scatter(
+        x=future_dates,
+        y=predicted_prices.flatten(),
+        mode='lines+markers',
+        name='Predicted Prices',
+        line=dict(color='blue')
+    ))
+
+    # Layout
+    fig.update_layout(
+        title="FTSE 100 - Historical & 7-Day Forecast",
+        xaxis_title="Date",
+        yaxis_title="FTSE 100 Price",
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        font=dict(size=14),
+        margin=dict(l=20, r=20, t=40, b=20),
+        showlegend=True
+    )
+
+    fig.show()
+
 def main():
+    import sys
+    print(sys.version)
     print('Starting Programme')
     print('Starting processing data')
     BackFillData()
@@ -98,6 +201,8 @@ def main():
     print('Start Generating initial data visualisation')
     VisualiseData()
     print('Finished Initial  visuals')
+    Build_Model()
+    print('Finished building model')
 
 
 
