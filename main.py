@@ -1,15 +1,12 @@
 import pandas as pd
-import plotly.graph_objs as go
-from plotly.offline import plot
-from plotly.offline import plot
-import plotly.graph_objs as go
 import numpy as np
-import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
 from keras import Input
-from datetime import datetime, timedelta
+import plotly.graph_objs as go
+from plotly.offline import plot
+
 
 
 def Convert_Volume(val):
@@ -26,8 +23,8 @@ def Convert_Volume(val):
     return None
 
 
-
-def BackFillData():
+#Populate any missing data with the data from previous trading day
+def ForwardFillData():
     
     #Import and Parse the Date column and define the format of date
     df = pd.read_csv("FTSE100.csv", parse_dates=["Date"], dayfirst=True)
@@ -38,14 +35,14 @@ def BackFillData():
     df = df.reindex(all_business_days)
     df.index.name = 'Date'
 
-    #Do Backward fill so the missing dates have the price,volume and percentage as same as the last business day 
+    #Do Forward fill so the missing dates have the price,volume and percentage as same as the last business day 
     df.ffill(inplace=True)
     
     #Convert volume to a float instead of B and M denoting Billion and million respectively
     df["Vol."] = df["Vol."].apply(Convert_Volume).astype(float)
     
     
-    #Sort and write output to a csv file
+    #Sort and write output to a csv file to visualisation
     df = df.sort_index(ascending=False)
     df.to_csv('FTSE100_DataProcessed.csv', index=True)
 
@@ -99,10 +96,14 @@ def VisualiseData():
 
 
 def Build_Model():
+
+    #Number of days to predict prices
+    FORECAST_DAYS = 7 
+
     # Load and preprocess data
     df = pd.read_csv("FTSE100_DataProcessed.csv")
     df['Price'] = df['Price'].str.replace(',', '').astype(float)
-    df = df.sort_values('Date')  # Oldest to newest
+    df = df.sort_values('Date') 
 
     # Scale prices
     scaler = MinMaxScaler()
@@ -129,12 +130,12 @@ def Build_Model():
     model.compile(optimizer='adam', loss='mean_squared_error')
     model.fit(X, y, epochs=20, batch_size=16, verbose=0)
 
-    # Predict next 7 days
+    # Predict next N days
     last_sequence = scaled_prices[-window_size:]
     predicted = []
     input_seq = last_sequence.reshape(1, window_size, 1)
 
-    for _ in range(7):
+    for _ in range(FORECAST_DAYS):
         next_price = model.predict(input_seq, verbose=0)
         predicted.append(next_price[0, 0])
         input_seq = np.append(input_seq[:, 1:, :], [[[next_price[0, 0]]]], axis=1)
@@ -149,10 +150,10 @@ def Build_Model():
 
     # Create future dates (as pandas datetime for plotting)
     last_date = df['Date'].iloc[-1]
-    future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=7, freq='D')
+    future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=FORECAST_DAYS, freq='D')
 
     # Print predicted results with dates
-    print("\nPredicted Prices:")
+    print(f"\nPredicted Prices for next {FORECAST_DAYS} days:")
     for i, price in enumerate(predicted_prices, 1):
         print(f"{future_dates[i-1].date()}: {price[0]:.2f}")
 
@@ -179,7 +180,7 @@ def Build_Model():
 
     # Layout
     fig.update_layout(
-        title="FTSE 100 - Historical & 7-Day Forecast",
+        title=f"FTSE 100 - Historical & {FORECAST_DAYS}-Day Forecast",
         xaxis_title="Date",
         yaxis_title="FTSE 100 Price",
         plot_bgcolor="white",
@@ -196,14 +197,13 @@ def main():
     print(sys.version)
     print('Starting Programme')
     print('Starting processing data')
-    BackFillData()
+    ForwardFillData()
     print('Finished Processing Data and outputted the data to FTSE100_DataProcessed')
     print('Start Generating initial data visualisation')
     VisualiseData()
     print('Finished Initial  visuals')
     Build_Model()
     print('Finished building model')
-
 
 
 
